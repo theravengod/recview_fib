@@ -27,6 +27,7 @@ public class MainActivityFragment extends Fragment {
 
     private static final String TAG = MainActivityFragment.class.getSimpleName();
 
+    // TODO: modify this to set the target for Fibonacci generation
     private static final long FIBONACCI_TARGET_VALUE = 10000;
 
     private RecyclerView mRecyclerView;
