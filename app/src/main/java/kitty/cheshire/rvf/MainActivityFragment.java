@@ -1,11 +1,17 @@
 package kitty.cheshire.rvf;
 
+import android.app.Activity;
 import android.app.Fragment;
+import android.app.ProgressDialog;
+import android.content.ComponentCallbacks2;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.design.widget.Snackbar;
 import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,12 +27,15 @@ public class MainActivityFragment extends Fragment {
 
     private static final String TAG = MainActivityFragment.class.getSimpleName();
 
-    private static final long PAGE_MAX_VALUE = 50;
+    private static final long FIBONACCI_TARGET_VALUE = 10000;
 
     private RecyclerView mRecyclerView;
+    private LinearLayoutManager mLayoutManager;
     private Context mContext;
     private ArrayList<Long> mNumbersList;
-    private long mLastTargetValue;
+    private boolean isListGenerated;
+    private ProgressDialog mProgressDialog;
+    private AsyncTask<Long, Long, ArrayList<Long>> mTask;
 
     public MainActivityFragment() {
     }
@@ -34,8 +43,6 @@ public class MainActivityFragment extends Fragment {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        generateNumbers(0);
     }
 
     @Override
@@ -45,8 +52,8 @@ public class MainActivityFragment extends Fragment {
         mRecyclerView = (RecyclerView) rootView.findViewById(R.id.rc_view);
         mRecyclerView.setHasFixedSize(true);
 
-        LinearLayoutManager layoutManager = new LinearLayoutManager(mContext);
-        mRecyclerView.setLayoutManager(layoutManager);
+        mLayoutManager = new LinearLayoutManager(mContext);
+        mRecyclerView.setLayoutManager(mLayoutManager);
 
         return rootView;
     }
@@ -61,7 +68,17 @@ public class MainActivityFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        populateRCView();
+
+        if (!isListGenerated) {
+            generateNumbers(FIBONACCI_TARGET_VALUE, new Runnable() {
+                @Override
+                public void run() {
+                    populateRCView();
+                }
+            });
+        } else {
+            populateRCView();
+        }
     }
 
     @Override
@@ -70,11 +87,32 @@ public class MainActivityFragment extends Fragment {
         super.onDetach();
     }
 
-    private static long getFibViaDynamic(long start, long target) {
+    @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            if (mProgressDialog != null) {
+                mProgressDialog.dismiss();
+            }
+            if (mTask != null) {
+                mTask.cancel(true);
+            }
+            Snackbar.make(getView(), "Free memory is dangerous low", Snackbar.LENGTH_INDEFINITE)
+                    .setAction("Close", new View.OnClickListener() {
+                        @Override
+                        public void onClick(View v) {
+                            ((Activity) mContext).finish();
+                        }
+                    })
+                    .show();
+        }
+    }
+
+    private static long getFibViaDynamic(long target) {
         long val1 = 0;
         long val2 = 1;
         long sum = val1 + val2;
-        for (long i = start; i < target; i++) {
+        for (long i = 0; i < target; i++) {
             sum = val1 + val2;
             val1 = val2;
             val2 = sum;
@@ -82,30 +120,62 @@ public class MainActivityFragment extends Fragment {
         return sum;
     }
 
-    private void generateNumbers(long startValue) {
-        if (mNumbersList == null) {
-            mNumbersList = new ArrayList<>();
+    private void generateNumbers(long lastTargetValue, final Runnable trigger) {
+        if (mContext != null) {
+            if (mProgressDialog == null) {
+                mProgressDialog = new ProgressDialog(mContext);
+                mProgressDialog.setIndeterminate(true);
+            }
         }
+        mTask = new AsyncTask<Long, Long, ArrayList<Long>>() {
 
-        mLastTargetValue = startValue + PAGE_MAX_VALUE;
-        for (long i = startValue; i < mLastTargetValue; i++) {
-            mNumbersList.add(getFibViaDynamic(startValue, i));
-        }
+            @Override
+            protected void onPreExecute() {
+                mProgressDialog = new ProgressDialog(mContext);
+                mProgressDialog.setIndeterminate(true);
+                mProgressDialog.setMessage("Generating numbers ...");
+                mProgressDialog.setCancelable(true);
+                mProgressDialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
+                    @Override
+                    public void onCancel(DialogInterface dialog) {
+                        mTask.cancel(true);
+                        ((Activity) mContext).finish();
+                    }
+                });
+                mProgressDialog.show();
+            }
+
+            @Override
+            protected ArrayList<Long> doInBackground(Long... params) {
+                mNumbersList = new ArrayList<>();
+
+                for (long i = 0; i < params[0]; i++) {
+                    long number = getFibViaDynamic(i);
+                    Log.i(TAG, "Number : " + String.valueOf(number));
+                    mNumbersList.add(number);
+                }
+                return mNumbersList;
+            }
+
+            @Override
+            protected void onPostExecute(ArrayList<Long> longs) {
+                mProgressDialog.dismiss();
+                isListGenerated = true;
+                trigger.run();
+            }
+        }.execute(lastTargetValue);
     }
 
     private void populateRCView() {
-        mRecyclerView.setAdapter(new ElementAdapter(mNumbersList, new RecyclerViewOnClickListener() {
-            @Override
-            public void onItemClick(View view, Object tag, int position) {
-                Snackbar.make(view, "Clicked on : " + String.valueOf((Long) tag), Snackbar.LENGTH_SHORT)
-                        .show();
-            }
-
-            @Override
-            public boolean onItemLongClick(View view, Object tag, int position) {
-                return false;
-            }
-        }));
+        if (isListGenerated) {
+            mRecyclerView.setAdapter(new ElementAdapter(mNumbersList, new RecyclerViewOnClickListener() {
+                @Override
+                public void onItemClick(View view, Object tag, int position) {
+                    Snackbar.make(view, "Clicked on : " + String.valueOf((Long) tag), Snackbar.LENGTH_SHORT)
+                            .show();
+                }
+            }));
+        }
     }
 
     private static class ElementViewHolder extends RecyclerView.ViewHolder {
@@ -122,18 +192,11 @@ public class MainActivityFragment extends Fragment {
                     listener.onItemClick(itemView, tTag, tPosition);
                 }
             });
-            itemView.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override
-                public boolean onLongClick(View v) {
-                    return listener.onItemLongClick(itemView, tTag, tPosition);
-                }
-            });
         }
     }
 
     private interface RecyclerViewOnClickListener {
         void onItemClick(View view, Object tag, int position);
-        boolean onItemLongClick(View view, Object tag, int position);
     }
 
     private class ElementAdapter extends RecyclerView.Adapter<ElementViewHolder> {
